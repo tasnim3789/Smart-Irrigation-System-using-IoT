@@ -1,0 +1,151 @@
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID "TMPL6S_6aszd4"
+#define BLYNK_TEMPLATE_NAME "agricultural irrigation systems"
+#define BLYNK_AUTH_TOKEN "W91DMXGvF0jSbGBfK_fXRAopQKymsAtT"
+
+// Include necessary libraries
+#include <LiquidCrystal_I2C.h>
+#include <DHT.h>
+#include <DHT_U.h>
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <ThingSpeak.h> // Include the ThingSpeak library
+
+// Initialize LCD display
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Define DHT sensor type and pin
+#define DHTPIN D4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+// Define component pins
+#define sensor A0
+#define relayPin D5  // Pin connected to relay module
+
+// Blynk authentication token and WiFi credentials
+char auth[] = "W91DMXGvF0jSbGBfK_fXRAopQKymsAtT";
+char ssid[] = "SCube Network 168";
+char pass[] = "hrbmx168";
+
+// ThingSpeak settings
+char thingSpeakAddress[] = "api.thingspeak.com";
+unsigned long channelID = 2539884; // Your ThingSpeak Channel ID
+const char *writeAPIKey = "JX67BEI3IUQWQPIC"; // Your ThingSpeak Write API Key
+
+WiFiClient client; // 
+
+// Blynk timer
+BlynkTimer timer;
+
+// Variable to store pump status
+bool pumpStatus = false;
+
+void setup() {
+  // Initialize Serial communication
+  Serial.begin(9600);
+
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+
+  // Initialize DHT sensor
+  dht.begin();
+
+  // Initialize Blynk
+  Blynk.begin(auth, ssid, pass, "blynk.cloud", 80);
+
+  // Initialize relay pin
+  pinMode(relayPin, OUTPUT);
+  digitalWrite(relayPin, LOW);  // Ensure pump is initially off
+
+  // Display loading message
+  lcd.setCursor(1, 0);
+  lcd.print("System Loading");
+  for (int a = 0; a <= 15; a++) {
+    lcd.setCursor(a, 1);
+    lcd.print(".");
+    delay(500);
+  }
+  lcd.clear();
+
+  // Call the function to read sensors
+  timer.setInterval(100L, readSensors);
+}
+
+// Function to read sensors
+void readSensors() {
+  // Read soil moisture value
+  int soilMoistureValue = analogRead(sensor);
+  soilMoistureValue = map(soilMoistureValue, 0, 1024, 0, 100);
+  soilMoistureValue = (soilMoistureValue - 100) * -1;
+
+  // Read humidity and temperature values
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  // Display moisture, humidity, and temperature on LCD
+  lcd.setCursor(0, 0);
+  lcd.print("M: ");
+  lcd.print(soilMoistureValue);
+
+  lcd.setCursor(0, 1);
+  lcd.print("H: ");
+  lcd.print(humidity);
+  lcd.print(" T: ");
+  lcd.print(temperature);
+  lcd.print("C");
+
+  // Print values to Serial Monitor
+  Serial.print("Moisture: ");
+  Serial.print(soilMoistureValue);
+  Serial.print("%, Humidity: ");
+  Serial.print(humidity);
+  Serial.print("%, Temperature: ");
+  Serial.print(temperature);
+  Serial.println("C");
+
+  // Control the pump motor based on soil moisture level if not overridden by Blynk button
+  if (!pumpStatus && soilMoistureValue >= 20 && soilMoistureValue <= 35) {
+    // Soil moisture is within desired range, turn on pump
+    digitalWrite(relayPin, HIGH);  // Turn on pump
+    lcd.setCursor(10, 0);
+    lcd.print("P: On");
+  } else {
+    // Soil moisture is either too low or too high, turn off pump
+    digitalWrite(relayPin, LOW);  // Turn off pump
+    lcd.setCursor(10, 0);
+    lcd.print("P: Off");
+  }
+
+  // Send data to ThingSpeak
+  ThingSpeak.begin(client);
+  ThingSpeak.setField(1, soilMoistureValue);
+  ThingSpeak.setField(2, humidity);
+  ThingSpeak.setField(3, temperature);
+  ThingSpeak.setField(4, pumpStatus ? 1 : 0); // Convert pumpStatus to integer (1 for on, 0 for off)
+  ThingSpeak.writeFields(channelID, writeAPIKey);
+}
+
+// Function to handle Blynk button value
+BLYNK_WRITE(V4) {
+  int value = param.asInt();
+  if (value == 1) {
+    // Button is pressed, turn on pump
+    digitalWrite(relayPin, HIGH);
+    lcd.setCursor(10, 0);
+    lcd.print("P: On");
+    pumpStatus = true;
+  } else {
+    // Button is released, turn off pump
+    digitalWrite(relayPin, LOW);
+    lcd.setCursor(10, 0);
+    lcd.print("P: Off");
+    pumpStatus = false;
+  }
+}
+
+void loop() {
+  Blynk.run(); // Run the Blynk library
+  timer.run(); // Run the Blynk timer
+}
